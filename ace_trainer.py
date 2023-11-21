@@ -450,6 +450,23 @@ class TrainerACE:
         reprojection_error_b2 = pred_px_b21.squeeze() - target_px_b2
         reprojection_error_b1 = torch.norm(reprojection_error_b2, dim=1, keepdim=True, p=1)
 
+        if self.options.rev_order_loss:
+            # Add inverse order mask penalty.
+            target_px_b2HW = target_px_b2.reshape(-1, 2, 16, 32)
+            tgt_roll_px_b2HW = torch.roll(torch.roll(target_px_b2HW, shifts=-1, dims=2), shifts=-1, dims=3)
+            tgt_H_inc_mask_bHW = (tgt_roll_px_b2HW[:, 0] - target_px_b2HW[:, 0]) > 0
+            tgt_W_inc_mask_bHW = (tgt_roll_px_b2HW[:, 1] - target_px_b2HW[:, 1]) > 0
+
+            pred_px_b2HW = pred_px_b21.reshape(-1, 2, 16, 32)
+            pred_roll_px_b2HW = torch.roll(torch.roll(pred_px_b2HW, shifts=-1, dims=2), shifts=-1, dims=3)
+            pred_H_inc_mask_bHW = (pred_roll_px_b2HW[:, 0] - pred_px_b2HW[:, 0]) > 0
+            pred_W_inc_mask_bHW = (pred_roll_px_b2HW[:, 1] - pred_px_b2HW[:, 1]) > 0
+
+            rev_order_mask_bHW = torch.logical_or(torch.logical_xor(tgt_H_inc_mask_bHW, pred_H_inc_mask_bHW),
+                                                  torch.logical_xor(tgt_W_inc_mask_bHW, pred_W_inc_mask_bHW))
+            rev_order_mask_b1 = rev_order_mask_bHW.flatten()
+            loss_rev_order = self.repro_loss.compute(reprojection_error_b1[rev_order_mask_b1], self.iteration)
+
         #
         # Compute masks used to ignore invalid pixels.
         #
@@ -479,6 +496,8 @@ class TrainerACE:
 
         # Final loss is the sum of all 2.
         loss = loss_valid + loss_invalid
+        if self.options.rev_order_loss:
+            loss += loss_rev_order
         loss /= batch_size
 
         # We need to check if the step actually happened, since the scaler might skip optimisation steps.
