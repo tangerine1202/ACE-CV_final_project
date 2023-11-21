@@ -85,6 +85,7 @@ class TrainerACE:
             cluster_idx=self.options.cluster_idx,    # Optional clustering for Cambridge experiments.
             mask_method=self.mask_method,
             mask_radius=self.options.mask_radius,
+            detector_name=self.options.detector_name,
         )
 
         _logger.info("Loaded training scan from: {} -- {} images, mean: {:.2f} {:.2f} {:.2f}".format(
