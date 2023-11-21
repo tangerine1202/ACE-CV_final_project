@@ -4,6 +4,7 @@ import random
 from pathlib import Path
 import time
 
+import h5py
 import cv2
 import numpy as np
 import torch
@@ -46,6 +47,7 @@ class CamLocDataset(Dataset):
                  cluster_idx=None,
                  mask_method='no',
                  mask_radius=3,
+                 detector_name=None,
                  ):
         """Constructor.
 
@@ -75,10 +77,12 @@ class CamLocDataset(Dataset):
 
             mask_method: masking method.
             mask_radius: The radius of mask for sampling points.
+            detector_name: The name of the detector used for masking.
         """
 
         self.mask_method = mask_method
         self.mask_radius = mask_radius
+        self.detector_name = detector_name
 
         self.use_half = use_half
 
@@ -139,7 +143,13 @@ class CamLocDataset(Dataset):
 
         if self.mask_method == 'sfm':
             sfm_file = root_dir.parent / 'reconstruction.nvm'
-            self._create_sfm_from_nvm(sfm_file)
+            sfm_data = self._create_sfm_from_nvm(sfm_file)
+            self.sfm_fname2img_id = sfm_data['fname2img_id']
+            self.sfm_img_id2pts_ids = sfm_data['img_id2pts_ids']
+            self.sfm_pts3d_arr = sfm_data['pts3d_arr']
+        elif self.mask_method == 'detector':
+            keypoints_file = root_dir / 'keypoints' / f'{self.detector_name}.h5'
+            self.keypoints_h5 = h5py.File(keypoints_file, 'r')
 
         if self.init or self.eye:
             # Load GT scene coordinates.
@@ -237,9 +247,11 @@ class CamLocDataset(Dataset):
     def _create_sfm_from_nvm(self, sfm_file):
         pts3d_arr, img_id2pts_ids, img_id2fname = read_nvm_file(sfm_file)
         fname2img_id = {v.split('.')[0]: k for k, v in img_id2fname.items()}
-        self.sfm_fname2img_id = fname2img_id
-        self.sfm_img_id2pts_ids = img_id2pts_ids
-        self.sfm_pts3d_arr = pts3d_arr
+        return {
+            'fname2img_id': fname2img_id,
+            'img_id2pts_ids': img_id2pts_ids,
+            'pts3d_arr': pts3d_arr,
+        }
 
     def _cluster(self, num_clusters):
         """
@@ -383,6 +395,15 @@ class CamLocDataset(Dataset):
         pts3D = torch.from_numpy(pts3D).float()
         return pts3D
 
+    def _load_pts2D_from_detector(self, idx, img_size):
+        fname = self.rgb_files[idx].name
+        pts2D = self.keypoints_h5[fname]['keypoints'][()]
+        orig_img_size = self.keypoints_h5[fname]['image_size'][()]
+        scale = img_size / orig_img_size
+        pts2D *= scale
+        pts2D = torch.from_numpy(pts2D).float()
+        return pts2D
+
     def _project_pts3D_to_2D(self, pts3D, pose_inv, intrinsics):
         pts3D_h = torch.cat((pts3D, torch.ones((pts3D.shape[0], 1))), dim=1)  # N, 4
         pts2D = (intrinsics @ pose_inv[:3] @ pts3D_h.t()).t()  # N, 3
@@ -457,15 +478,15 @@ class CamLocDataset(Dataset):
         # Also need the inverse.
         intrinsics_inv = intrinsics.inverse()
 
-        if self.mask_method == 'no':
-            image_mask_pts2D = image_mask.clone()
-        elif self.mask_method == 'sfm':
+        if self.mask_method == 'sfm':
             # Load 3D points.
             pts3D = self._load_pts3D(idx)
-
             # Apply masking from 3D points.
-            image_mask_pts2D = torch.zeros_like(image_mask)
             pts2D = self._project_pts3D_to_2D(pts3D, pose_inv, intrinsics)
+        elif self.mask_method == 'detector':
+            pts2D = self._load_pts2D_from_detector(idx, (W, H))
+
+        if self.mask_method in ['sfm', 'detector']:
             pts2D = pts2D.round().long()
             # remove out of image points
             out_of_img_mask = (pts2D[:, 0] < 0) | (pts2D[:, 0] >= W) \
@@ -473,6 +494,7 @@ class CamLocDataset(Dataset):
             pts2D = pts2D[~out_of_img_mask]
 
             # TODO: sanity check the mask is correct
+            image_mask_pts2D = torch.zeros_like(image_mask)
             image_mask_pts2D[:, pts2D[:, 1], pts2D[:, 0]] = 1
             # enlarge to a radius
             # FIXME: this seems to be slow when the radius is large
@@ -485,6 +507,8 @@ class CamLocDataset(Dataset):
                 fname = self.rgb_files[idx].name
                 _logger.warning(
                     f'The pts2D mask ratio is too low ({pts2D_ratio}) on {fname}. Please consider doing a sanity check.')
+        elif self.mask_method == 'no':
+            image_mask_pts2D = image_mask.clone()
         else:
             raise NotImplementedError
 
@@ -551,6 +575,10 @@ class CamLocDataset(Dataset):
         if self.mask_method == 'sfm':
             info.update({
                 'pts3D': pts3D,
+                'pts2D': pts2D,
+            })
+        elif self.mask_method == 'detector':
+            info.update({
                 'pts2D': pts2D,
             })
 
