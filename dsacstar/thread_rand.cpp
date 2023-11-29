@@ -1,5 +1,6 @@
 #include "thread_rand.h"
 #include <omp.h>
+#include <algorithm>
 
 std::vector<std::mt19937> ThreadRand::generators;
 bool ThreadRand::initialised = false;
@@ -83,4 +84,33 @@ int igauss(int mean, int stdDev, int tid)
 double dgauss(double mean, double stdDev, int tid)
 {
     return ThreadRand::dgauss(mean, stdDev, tid);
+}
+
+std::vector<int> sample_indices_from_weights(const std::vector<float>& weights, int sampleSize, int tid)
+{
+    // ref: https://stackoverflow.com/a/53634099
+    // FIXME: the reference mention that it is not efficient if the sample size is much smaller than the basic population,
+    //        which is the case for our application. We may need to find a better way to do this.
+    std::vector<double> vals;
+    for (int iter = 0; iter < weights.size(); iter++)
+    {
+        double w = (double) weights[iter];
+        double randVal = ThreadRand::drand(0.0, 1.0, tid);
+        vals.push_back(std::pow(randVal, 1. / w));
+    }
+
+    std::vector<std::pair<int, double>> valsWithIndices;
+    for (int iter = 0; iter < vals.size(); iter++)
+    {
+        valsWithIndices.emplace_back(iter, vals[iter]);
+    }
+    std::sort(valsWithIndices.begin(), valsWithIndices.end(), [](auto x, auto y) {return x.second > y.second; });
+
+    std::vector<int> samples;
+    for (auto iter = 0; iter < sampleSize; iter++)
+    {
+        samples.push_back(valsWithIndices[iter].first);
+    }
+
+    return samples;
 }

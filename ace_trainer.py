@@ -425,10 +425,11 @@ class TrainerACE:
         # Reshape to a "fake" BCHW shape, since it's faster to run through the network compared to the original shape.
         features_bCHW = features_bC[None, None, ...].view(-1, 16, 32, channels).permute(0, 3, 1, 2)
         with autocast(enabled=self.options.use_half):
-            pred_scene_coords_b3HW = self.regressor.get_scene_coordinates(features_bCHW)
+            pred_scene_coords_b3HW, pred_log_err_b1HW = self.regressor.get_scene_coordinates(features_bCHW)
 
         # Back to the original shape. Convert to float32 as well.
         pred_scene_coords_b31 = pred_scene_coords_b3HW.permute(0, 2, 3, 1).flatten(0, 2).unsqueeze(-1).float()
+        pred_log_err_b1 = pred_log_err_b1HW.flatten().unsqueeze(-1).float()
 
         # Make 3D points homogeneous so that we can easily matrix-multiply them.
         pred_scene_coords_b41 = to_homogeneous(pred_scene_coords_b31)
@@ -478,8 +479,12 @@ class TrainerACE:
         invalid_mask_b11 = invalid_mask_b1.unsqueeze(2)
         loss_invalid = torch.abs(target_camera_coords_b31 - pred_cam_coords_b31).masked_select(invalid_mask_b11).sum()
 
+        # Compute the loss for the estimated reporjection error.
+        target_repro_log_err_b1 = reprojection_error_b1.detach().log()
+        loss_est_log_err = torch.nn.functional.mse_loss(pred_log_err_b1, target_repro_log_err_b1)
+
         # Final loss is the sum of all 2.
-        loss = loss_valid + loss_invalid
+        loss = loss_valid + loss_invalid + loss_est_log_err
         loss /= batch_size
 
         # We need to check if the step actually happened, since the scaler might skip optimisation steps.

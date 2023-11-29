@@ -50,6 +50,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /**
  * @brief Estimate a camera pose based on a scene coordinate prediction
  * @param sceneCoordinatesSrc Scene coordinate prediction, (1x3xHxW) with 1=batch dimension (only batch_size=1 supported atm), 3=scene coordainte dimensions, H=height and W=width.
+ * @param confidencesSrc Confidence prediction, (HxW) with 1=batch dimension (only batch_size=1 supported atm), H=height and W=width.	
  * @param outPoseSrc Camera pose (output parameter), (4x4) tensor containing the homogeneous camera tranformation matrix.
  * @param ransacHypotheses Number of RANSAC iterations.
  * @param inlierThreshold Inlier threshold for RANSAC in px.
@@ -63,6 +64,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 int dsacstar_rgb_forward(
 	at::Tensor sceneCoordinatesSrc, 
+	at::Tensor confidencesSrc,
 	at::Tensor outPoseSrc,
 	int ransacHypotheses, 
 	float inlierThreshold,
@@ -71,13 +73,17 @@ int dsacstar_rgb_forward(
 	float ppointY,
 	float inlierAlpha,
 	float maxReproj,
-	int subSampling)
+	int subSampling,
+	int samplingMethod
+	)
 {
 	ThreadRand::init();
 
 	// access to tensor objects
 	dsacstar::coord_t sceneCoordinates = 
 		sceneCoordinatesSrc.accessor<float, 4>();
+	dsacstar::conf_t confidences =
+		confidencesSrc.accessor<float, 2>();
 
 	// dimensions of scene coordinate predictions
 	int imH = sceneCoordinates.size(2);
@@ -105,15 +111,18 @@ int dsacstar_rgb_forward(
 
 	dsacstar::sampleHypotheses(
 		sceneCoordinates,
+		confidences,
 		sampling,
 		camMat,
 		ransacHypotheses,
 		MAX_HYPOTHESES_TRIES,
 		inlierThreshold,
+		samplingMethod,
 		hypotheses,
 		sampledPoints,
 		imgPts,
-		objPts);
+		objPts
+		);
 
 	std::cout << "Done in " << stopW.stop() / 1000 << "s." << std::endl;	
 	std::cout << BLUETEXT("Calculating scores.") << std::endl;

@@ -153,3 +153,15 @@ int igauss(int mean, int stdDev, int tid = -1);
    * @return double Random double value.
    */
 double dgauss(double mean, double stdDev, int tid = -1);
+
+/**
+   * @brief Returns a list of indices sampled according to the given weights.
+   * 
+   * This method used the ThreadRand class.
+   * 
+   * @param weights Weights to sample from.
+   * @param sampleSize Number of samples to draw.
+   * @param tid Optional parameter. ID of the thread to use. If not given, the method will obtain the thread ID itself.
+   * @return std::vector<size_t> List of indices sampled according to the given weights.
+   */
+std::vector<int> sample_indices_from_weights(const std::vector<float>& weights, int sampleSize, int tid = -1);

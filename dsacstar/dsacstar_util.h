@@ -122,6 +122,7 @@ namespace dsacstar
 	/**
 	* @brief Samples a set of RANSAC camera pose hypotheses using PnP
 	* @param sceneCoordinates Scene coordinate prediction (1x3xHxW).
+	* @param confidences Confidence map (HxW).
 	* @param sampling Contains original image coordinate for each scene coordinate predicted.
 	* @param camMat Camera calibration matrix.
 	* @param ransacHypotheses RANSAC iterations.
@@ -134,11 +135,13 @@ namespace dsacstar
 	*/
 	inline void sampleHypotheses(
 		dsacstar::coord_t& sceneCoordinates,
+		dsacstar::conf_t& confidences,
 		const cv::Mat_<cv::Point2i>& sampling,
 		const cv::Mat_<float>& camMat,
 		int ransacHypotheses,
 		unsigned maxTries,
 		float inlierThreshold,
+		int samplingMethod,
 		std::vector<dsacstar::pose_t>& hypotheses,
 		std::vector<std::vector<cv::Point2i>>& sampledPoints,     
 		std::vector<std::vector<cv::Point2f>>& imgPts,
@@ -146,6 +149,13 @@ namespace dsacstar
 	{
 		int imH = sceneCoordinates.size(2);
 		int imW = sceneCoordinates.size(3);
+
+		std::vector<float> confidencesVec;
+		for(int y = 0; y < imH; y++)
+		for(int x = 0; x < imW; x++)
+		{
+			confidencesVec.push_back(confidences[y][x]);
+		}
 
 		// keep track of the points each hypothesis is sampled from
 		sampledPoints.resize(ransacHypotheses);     
@@ -165,12 +175,25 @@ namespace dsacstar
 			objPts[h].clear();
 			sampledPoints[h].clear();
 
-			for(int j = 0; j < 4; j++)
+			std::vector<int> xys(4);
+			if (samplingMethod == 0)  // uniform sampling
 			{
-				// 2D location in the subsampled image
-				int x = irand(0, imW);
-				int y = irand(0, imH);
+				for (int j = 0; j < 4; j++)
+				{
+					int x = irand(0, imW);
+					int y = irand(0, imH);
+					xys[j] = y * imW + x;
+				}
+			}
+			else if (samplingMethod == 1)  // weighted sampling based on confidence
+			{
+				xys = sample_indices_from_weights(confidencesVec, 4);
+			}
 
+			for (int j = 0; j < 4; j++)
+			{
+				int x = xys[j] % imW;
+				int y = xys[j] / imW;
 				// 2D location in the original RGB image
 				imgPts[h].push_back(sampling(y, x)); 
 				// 3D object coordinate

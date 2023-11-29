@@ -28,6 +28,12 @@ def _strtobool(x):
     return bool(strtobool(x))
 
 
+SAMPLING_METHODS = {
+    'uniform': 0,
+    'confidence': 1,
+}
+
+
 if __name__ == '__main__':
     # Setup logging.
     logging.basicConfig(level=logging.INFO)
@@ -40,6 +46,13 @@ if __name__ == '__main__':
                         help='path to a scene in the dataset folder, e.g. "datasets/Cambridge_GreatCourt"')
 
     parser.add_argument('network', type=Path, help='path to a network trained for the scene (just the head weights)')
+
+    parser.add_argument('--sampling_method', type=str, choices=list(SAMPLING_METHODS.keys()),
+                        help=f'sampling method for hypotheses; options: {list(SAMPLING_METHODS.keys())}')
+
+    parser.add_argument('--soft_conf_alpha', '-ca', type=float, default=5,
+                        help='alpha parameter of the soft confidence; controls the softness of the '
+                             'confidence distribution; lower means softer')
 
     parser.add_argument('--encoder_path', type=Path, default=Path(__file__).parent / "ace_encoder_pretrained.pt",
                         help='file containing pre-trained encoder weights')
@@ -199,14 +212,17 @@ if __name__ == '__main__':
 
             # Predict scene coordinates.
             with autocast(enabled=True):
-                scene_coordinates_B3HW = network(image_B1HW)
+                # scene_coordinates_B3HW = network(image_B1HW)
+                features = network.get_features(image_B1HW)
+                scene_coordinates_B3HW, est_log_err_B1HW = network.get_scene_coordinates(features)
 
             # We need them on the CPU to run RANSAC.
             scene_coordinates_B3HW = scene_coordinates_B3HW.float().cpu()
+            est_log_err_B1HW = est_log_err_B1HW.float().cpu()
 
             # Each frame is processed independently.
-            for frame_idx, (scene_coordinates_3HW, gt_pose_44, intrinsics_33, frame_path) in enumerate(
-                    zip(scene_coordinates_B3HW, gt_pose_B44, intrinsics_B33, filenames)):
+            for frame_idx, (scene_coordinates_3HW, est_log_err_1HW, gt_pose_44, intrinsics_33, frame_path) in enumerate(
+                    zip(scene_coordinates_B3HW, est_log_err_B1HW, gt_pose_B44, intrinsics_B33, filenames)):
 
                 # Extract focal length and principal point from the intrinsics matrix.
                 focal_length = intrinsics_33[0, 0].item()
@@ -221,9 +237,14 @@ if __name__ == '__main__':
                 # Allocate output variable.
                 out_pose = torch.zeros((4, 4))
 
+                # Compute the soft confidence.
+                est_err_HW = est_log_err_1HW.squeeze(0).exp()
+                conf_HW = torch.exp(-est_err_HW / opt.soft_conf_alpha)
+
                 # Compute the pose via RANSAC.
                 inlier_count = dsacstar.forward_rgb(
                     scene_coordinates_3HW.unsqueeze(0),
+                    conf_HW,
                     out_pose,
                     opt.hypotheses,
                     opt.threshold,
@@ -233,6 +254,7 @@ if __name__ == '__main__':
                     opt.inlieralpha,
                     opt.maxpixelerror,
                     network.OUTPUT_SUBSAMPLE,
+                    SAMPLING_METHODS[opt.sampling_method],
                 )
 
                 # Calculate translation error.
