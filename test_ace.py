@@ -240,14 +240,16 @@ if __name__ == '__main__':
                 # Compute the soft confidence.
                 est_err_HW = est_log_err_1HW.squeeze(0).exp()
                 conf_HW = torch.exp(-est_err_HW / opt.soft_conf_alpha)
+                conf_inlier_threshold = torch.quantile(conf_HW.flatten(), 0.5).item()
 
                 # Compute the pose via RANSAC.
-                inlier_count = dsacstar.forward_rgb(
+                inlier_map = dsacstar.forward_rgb(
                     scene_coordinates_3HW.unsqueeze(0),
                     conf_HW,
                     out_pose,
                     opt.hypotheses,
                     opt.threshold,
+                    conf_inlier_threshold,
                     focal_length,
                     ppX,
                     ppY,
@@ -256,6 +258,7 @@ if __name__ == '__main__':
                     network.OUTPUT_SUBSAMPLE,
                     SAMPLING_METHODS[opt.sampling_method],
                 )
+                inlier_count = inlier_map.sum().item()
 
                 # Calculate translation error.
                 t_err = float(torch.norm(gt_pose_44[0:3, 3] - out_pose[0:3, 3]))

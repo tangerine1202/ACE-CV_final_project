@@ -189,6 +189,8 @@ namespace dsacstar
 			{
 				xys = sample_indices_from_weights(confidencesVec, 4);
 			}
+			else 
+				assert(false);
 
 			for (int j = 0; j < 4; j++)
 			{
@@ -332,14 +334,19 @@ namespace dsacstar
 	/**
 	* @brief Calculate soft inlier counts.
 	* @param reproErrs Image of reprojection error for each pose hypothesis.
+	* @param confidences Confidence map (HxW).
 	* @param inlierThreshold RANSAC inlier threshold.
 	* @param inlierAlpha Alpha parameter for soft inlier counting.
+	* @param samplingMethod Sampling method
 	* @return List of soft inlier counts for each hypothesis.
 	*/
 	inline std::vector<double> getHypScores(
 		const std::vector<cv::Mat_<float>>& reproErrs,
+		const dsacstar::conf_t& confidences,
 		float inlierThreshold,
-		float inlierAlpha)
+		float inlierAlpha,
+		int samplingMethod
+		)
 	{
 		std::vector<double> scores(reproErrs.size(), 0);
 
@@ -353,7 +360,13 @@ namespace dsacstar
 		{
 			double softThreshold = inlierBeta * (reproErrs[h](y, x) - inlierThreshold);
 			softThreshold = 1 / (1+std::exp(-softThreshold));
-			scores[h] += 1 - softThreshold;
+			double softInlierCount = 1 - softThreshold;
+			if (samplingMethod == 0)  // uniform sampling
+				scores[h] += softInlierCount;
+			else if (samplingMethod == 1)  // weighted sampling based on confidence
+				scores[h] += confidences[y][x] * softInlierCount;
+			else
+				assert(false);
 		}
 
 		#pragma omp parallel for
@@ -533,23 +546,29 @@ namespace dsacstar
 	/**
 	* @brief Refine a pose hypothesis by iteratively re-fitting it to all inliers.
 	* @param sceneCoordinates Scene coordinate prediction (1x3xHxW).
+	* @param confidences Confidence map (HxW).
 	* @param reproErrs Original reprojection errors of the pose hypothesis, used to collect the first set of inliers.
 	* @param sampling Contains original image coordinate for each scene coordinate predicted.
 	* @param camMat Camera calibration matrix.
 	* @param inlierThreshold RANSAC inlier threshold.
+	* @param confidenceInlierThreshold Confidence inlier threshold.
 	* @param maxRefSteps Maximum refinement iterations (re-calculating inlier and refitting).
 	* @param maxReproj Reprojection errors are clamped to this maximum value.
+	* @param samplingMethod Sampling method
 	* @param hypothesis (output parameter) Refined pose.
 	* @param inlierMap (output parameter) 2D image indicating which scene coordinate are (final) inliers.
 	*/
 	inline void refineHyp(
 		dsacstar::coord_t& sceneCoordinates,
+		dsacstar::conf_t& confidences,
 		const cv::Mat_<float>& reproErrs,
 		const cv::Mat_<cv::Point2i>& sampling,
 		const cv::Mat_<float>& camMat,
 		float inlierThreshold,
+		float confidenceInlierThreshold,
 		unsigned maxRefSteps,
 		float maxReproj,
+		int samplingMethod,
 		dsacstar::pose_t& hypothesis,
 		cv::Mat_<int>& inlierMap)
 	{
@@ -570,7 +589,15 @@ namespace dsacstar
 			for(int x = 0; x < sampling.cols; x++)
 			for(int y = 0; y < sampling.rows; y++)
 			{
-				if(localReproErrs(y, x) < inlierThreshold)
+				bool isInlier = false;
+				if (samplingMethod == 0) // uniform sampling
+					isInlier = (localReproErrs(y, x) < inlierThreshold);
+				else if (samplingMethod == 1) // weighted sampling based on confidence
+					isInlier = (localReproErrs(y, x) < inlierThreshold && confidences[y][x] > confidenceInlierThreshold);
+				else
+					assert(false);
+
+				if(isInlier)
 				{
 					localImgPts.push_back(sampling(y, x));
 					localObjPts.push_back(cv::Point3f(

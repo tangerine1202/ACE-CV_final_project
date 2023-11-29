@@ -61,6 +61,7 @@ at::Tensor matIntToTensor(const cv::Mat_<int>& mat_int) {
  * @param outPoseSrc Camera pose (output parameter), (4x4) tensor containing the homogeneous camera tranformation matrix.
  * @param ransacHypotheses Number of RANSAC iterations.
  * @param inlierThreshold Inlier threshold for RANSAC in px.
+ * @param confidenceInlierThreshold Inlier threshold for RANSAC.
  * @param focalLength Focal length of the camera in px.
  * @param ppointX Coordinate (X) of the prinicpal points.
  * @param ppointY Coordinate (Y) of the prinicpal points.
@@ -75,6 +76,7 @@ at::Tensor dsacstar_rgb_forward(
 	at::Tensor outPoseSrc,
 	int ransacHypotheses, 
 	float inlierThreshold,
+	float confidenceInlierThreshold,
 	float focalLength,
 	float ppointX,
 	float ppointY,
@@ -151,8 +153,11 @@ at::Tensor dsacstar_rgb_forward(
     // soft inlier counting
 	std::vector<double> scores = dsacstar::getHypScores(
     	reproErrs,
+		confidences,
     	inlierThreshold,
-    	inlierAlpha);
+    	inlierAlpha,
+		samplingMethod
+		);
 
 	std::cout << "Done in " << stopW.stop() / 1000 << "s." << std::endl;
 	std::cout << BLUETEXT("Drawing final hypothesis.") << std::endl;	
@@ -174,12 +179,15 @@ at::Tensor dsacstar_rgb_forward(
 
 	dsacstar::refineHyp(
 		sceneCoordinates,
+		confidences,
 		reproErrs[hypIdx],
 		sampling,
 		camMat,
 		inlierThreshold,
+		confidenceInlierThreshold,
 		MAX_REF_STEPS,
 		maxReproj,
+		samplingMethod,
 		hypotheses[hypIdx],
 		inlierMap);
 
