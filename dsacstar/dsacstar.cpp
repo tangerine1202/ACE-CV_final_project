@@ -47,6 +47,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define MAX_REF_STEPS 100 // max pose refienment iterations
 #define MAX_HYPOTHESES_TRIES 1000000 // repeat sampling x times hypothesis if hypothesis is invalid
 
+at::Tensor matIntToTensor(const cv::Mat_<int>& mat_int) {
+	// Convert cv::Mat_<int> to torch::Tensor
+    at::Tensor tensor = at::from_blob(mat_int.data, {mat_int.rows, mat_int.cols}, torch::kInt);
+    // Clone the data to ensure memory is managed properly
+    return tensor.clone();
+}
+
 /**
  * @brief Estimate a camera pose based on a scene coordinate prediction
  * @param sceneCoordinatesSrc Scene coordinate prediction, (1x3xHxW) with 1=batch dimension (only batch_size=1 supported atm), 3=scene coordainte dimensions, H=height and W=width.
@@ -61,7 +68,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * @param subSampling Sub-sampling  of the scene coordinate prediction wrt the input image.
  * @return The number of inliers for the output pose.
  */
-int dsacstar_rgb_forward(
+at::Tensor dsacstar_rgb_forward(
 	at::Tensor sceneCoordinatesSrc, 
 	at::Tensor outPoseSrc,
 	int ransacHypotheses, 
@@ -178,7 +185,11 @@ int dsacstar_rgb_forward(
 		outPose[y][x] = estTrans(y, x);
 
 	// Return the inlier count. cv::sum returns a scalar, so we return its first element.
-	return cv::sum(inlierMap)[0];
+	// return inlierMap;
+
+	// Return the inlier map in torch tensor
+	at::Tensor inlierMapTensor = matIntToTensor(inlierMap);
+	return inlierMapTensor;
 }
 //
 ///**
