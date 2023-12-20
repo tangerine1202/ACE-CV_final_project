@@ -31,6 +31,7 @@ if __name__ == '__main__':
     parser.add_argument('--mask_method', type=str, choices=['no', 'sfm', 'detector'], help='masking method')
     parser.add_argument('--mask_radius', type=int, default=3, help='the radius of mask for sampling points')
     parser.add_argument('--detector_name', type=str, help='detector name')
+    parser.add_argument('--use_sam', type=_strtobool, help='use sam for masking')
 
     parser.add_argument('--encoder_path', type=Path, default=Path(__file__).parent / "ace_encoder_pretrained.pt",
                         help='file containing pre-trained encoder weights')

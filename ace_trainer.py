@@ -86,6 +86,7 @@ class TrainerACE:
             mask_method=self.mask_method,
             mask_radius=self.options.mask_radius,
             detector_name=self.options.detector_name,
+            use_sam=self.options.use_sam,
         )
 
         _logger.info("Loaded training scan from: {} -- {} images, mean: {:.2f} {:.2f} {:.2f}".format(

@@ -18,9 +18,10 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import default_collate
 from torchvision import transforms
 
+from ace_network import Regressor
 from colmap_util import read_cameras_binary, read_images_binary, read_points3D_binary
 from nvm_util import read_nvm_file
-from ace_network import Regressor
+from sam_utils import SAM
 
 _logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class CamLocDataset(Dataset):
                  mask_method='no',
                  mask_radius=3,
                  detector_name=None,
+                 use_sam=False,
                  ):
         """Constructor.
 
@@ -78,11 +80,15 @@ class CamLocDataset(Dataset):
             mask_method: masking method.
             mask_radius: The radius of mask for sampling points.
             detector_name: The name of the detector used for masking.
+            use_sam: Use SAM for masking.
         """
 
         self.mask_method = mask_method
         self.mask_radius = mask_radius
         self.detector_name = detector_name
+        self.use_sam = use_sam
+        if use_sam:
+            self.sam = SAM(model_name='l0', device='cpu')  # cpu is fast enough
 
         self.use_half = use_half
 
@@ -452,6 +458,7 @@ class CamLocDataset(Dataset):
         image_mask = torch.ones((1, H, W))
 
         # Apply remaining transforms.
+        rgb_image = np.array(image)
         image = self.image_transform(image)
 
         # Load pose.
@@ -478,6 +485,7 @@ class CamLocDataset(Dataset):
         # Also need the inverse.
         intrinsics_inv = intrinsics.inverse()
 
+        # Generate points for masking
         if self.mask_method == 'sfm':
             # Load 3D points.
             pts3D = self._load_pts3D(idx)
@@ -488,19 +496,37 @@ class CamLocDataset(Dataset):
 
         if self.mask_method in ['sfm', 'detector']:
             pts2D = pts2D.round().long()
+            # convert to (y, x)
+            pts2D = pts2D[:, [1, 0]]
             # remove out of image points
-            out_of_img_mask = (pts2D[:, 0] < 0) | (pts2D[:, 0] >= W) \
-                | (pts2D[:, 1] < 0) | (pts2D[:, 1] >= H)
+            out_of_img_mask = (pts2D[:, 0] < 0) | (pts2D[:, 0] >= H) | (pts2D[:, 1] < 0) | (pts2D[:, 1] >= W)
             pts2D = pts2D[~out_of_img_mask]
 
-            # TODO: sanity check the mask is correct
-            image_mask_pts2D = torch.zeros_like(image_mask)
-            image_mask_pts2D[:, pts2D[:, 1], pts2D[:, 0]] = 1
-            # enlarge to a radius
-            # FIXME: this seems to be slow when the radius is large
-            with torch.no_grad():
-                image_mask_pts2D = F.max_pool2d(
-                    image_mask_pts2D, kernel_size=self.mask_radius * 2 + 1, stride=1, padding=self.mask_radius)
+            if self.use_sam:
+                # Mask points using SAM with points as prompt
+                kps_idxs = np.random.choice(len(pts2D), 10 if len(pts2D) >= 10 else len(pts2D), replace=False)
+                point_coords = pts2D.cpu().numpy()[kps_idxs]
+                point_labels = np.ones(len(point_coords))
+                # rgb_image = np.asarray(rgb_image)
+                masks = self.sam.point_prompt(rgb_image, point_coords, point_labels)
+                image_mask_pts2D = torch.from_numpy(masks[0]).unsqueeze(0).float()
+            else:
+                # Mask points with a radius.
+                image_mask_pts2D = torch.zeros_like(image_mask)
+                image_mask_pts2D[:, pts2D[:, 0], pts2D[:, 1]] = 1
+                # enlarge to a radius
+                # FIXME: this seems to be slow when the radius is large
+                with torch.no_grad():
+                    image_mask_pts2D = F.max_pool2d(
+                        image_mask_pts2D, kernel_size=self.mask_radius * 2 + 1, stride=1, padding=self.mask_radius)
+
+            # plt.figure()
+            # plt.subplot(1, 2, 1)
+            # plt.imshow(rgb_image)
+            # plt.subplot(1, 2, 2)
+            # plt.imshow(image_mask_pts2D.squeeze().numpy(), cmap='gray')
+            # plt.savefig(f'mask_{idx}.png')
+            # raise Exception("Dev")
 
             pts2D_ratio = image_mask_pts2D.sum() / image_mask.sum()
             if pts2D_ratio < 0.01:
