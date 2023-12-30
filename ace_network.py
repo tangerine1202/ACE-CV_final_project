@@ -102,9 +102,9 @@ class Head(nn.Module):
         self.fc1 = nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0)
         self.fc2 = nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0)
 
-        self.est_err_fc1 = nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0)
-        self.est_err_fc2 = nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0)
-        self.est_err_fc3 = nn.Conv2d(self.head_channels, 1, 1, 1, 0)
+        self.conf_fc1 = nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0)
+        self.conf_fc2 = nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0)
+        self.conf_fc3 = nn.Conv2d(self.head_channels, 1, 1, 1, 0)
 
         if self.use_homogeneous:
             self.fc3 = nn.Conv2d(self.head_channels, 4, 1, 1, 0)
@@ -140,9 +140,10 @@ class Head(nn.Module):
         sc = F.relu(self.fc2(sc))
         sc = self.fc3(sc)
 
-        est_log_err = F.relu(self.est_err_fc1(res))
-        est_log_err = F.relu(self.est_err_fc2(est_log_err))
-        est_log_err = self.est_err_fc3(est_log_err)
+        conf = F.relu(self.conf_fc1(res))
+        conf = F.relu(self.conf_fc2(conf))
+        # TODO: Change to other numerical stable output, rather than sigmoid.
+        conf = F.sigmoid(self.conf_fc3(conf))
 
         if self.use_homogeneous:
             # Dehomogenize coords:
@@ -154,7 +155,7 @@ class Head(nn.Module):
         # Add the mean to the predicted coordinates.
         sc += self.mean
 
-        return sc, est_log_err
+        return sc, conf
 
 
 class Regressor(nn.Module):

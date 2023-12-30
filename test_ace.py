@@ -214,15 +214,15 @@ if __name__ == '__main__':
             with autocast(enabled=True):
                 # scene_coordinates_B3HW = network(image_B1HW)
                 features = network.get_features(image_B1HW)
-                scene_coordinates_B3HW, est_log_err_B1HW = network.get_scene_coordinates(features)
+                scene_coordinates_B3HW, conf_B1HW = network.get_scene_coordinates(features)
 
             # We need them on the CPU to run RANSAC.
             scene_coordinates_B3HW = scene_coordinates_B3HW.float().cpu()
-            est_log_err_B1HW = est_log_err_B1HW.float().cpu()
+            conf_B1HW = conf_B1HW.float().cpu()
 
             # Each frame is processed independently.
-            for frame_idx, (scene_coordinates_3HW, est_log_err_1HW, gt_pose_44, intrinsics_33, frame_path) in enumerate(
-                    zip(scene_coordinates_B3HW, est_log_err_B1HW, gt_pose_B44, intrinsics_B33, filenames)):
+            for frame_idx, (scene_coordinates_3HW, conf_1HW, gt_pose_44, intrinsics_33, frame_path) in enumerate(
+                    zip(scene_coordinates_B3HW, conf_B1HW, gt_pose_B44, intrinsics_B33, filenames)):
 
                 # Extract focal length and principal point from the intrinsics matrix.
                 focal_length = intrinsics_33[0, 0].item()
@@ -238,9 +238,8 @@ if __name__ == '__main__':
                 out_pose = torch.zeros((4, 4))
 
                 # Compute the soft confidence.
-                est_err_HW = est_log_err_1HW.squeeze(0).exp()
-                conf_HW = torch.exp(-est_err_HW / opt.soft_conf_alpha)
-                conf_inlier_threshold = torch.quantile(conf_HW.flatten(), 0.5).item()
+                conf_HW = conf_1HW.squeeze(0)
+                conf_inlier_threshold = 0.5
 
                 # Compute the pose via RANSAC.
                 inlier_map = dsacstar.forward_rgb(
