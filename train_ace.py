@@ -31,6 +31,10 @@ if __name__ == '__main__':
     parser.add_argument('--mask_method', type=str, choices=['no', 'sfm', 'detector'], help='masking method')
     parser.add_argument('--mask_radius', type=int, default=3, help='the radius of mask for sampling points')
     parser.add_argument('--detector_name', type=str, help='detector name')
+    # see plot of : x*(min_repro_thresh) - (conf_reg_alpha) * log(x)
+    # e.g. With conf_reg_alpha=20, When re-projection error is 10, confidence=0.87 has minimal loss 9.91.
+    parser.add_argument('--conf_reg_alpha', '-cra', type=float, default=20.0,
+                        help='confidence regularization alpha, please see paper "ConfNet: Prediction with Confidence"')
 
     parser.add_argument('--encoder_path', type=Path, default=Path(__file__).parent / "ace_encoder_pretrained.pt",
                         help='file containing pre-trained encoder weights')

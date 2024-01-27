@@ -425,10 +425,11 @@ class TrainerACE:
         # Reshape to a "fake" BCHW shape, since it's faster to run through the network compared to the original shape.
         features_bCHW = features_bC[None, None, ...].view(-1, 16, 32, channels).permute(0, 3, 1, 2)
         with autocast(enabled=self.options.use_half):
-            pred_scene_coords_b3HW = self.regressor.get_scene_coordinates(features_bCHW)
+            pred_scene_coords_b3HW, conf_b1HW = self.regressor.get_scene_coordinates(features_bCHW)
 
         # Back to the original shape. Convert to float32 as well.
         pred_scene_coords_b31 = pred_scene_coords_b3HW.permute(0, 2, 3, 1).flatten(0, 2).unsqueeze(-1).float()
+        conf_p1 = conf_b1HW.flatten().unsqueeze(-1).float()
 
         # Make 3D points homogeneous so that we can easily matrix-multiply them.
         pred_scene_coords_b41 = to_homogeneous(pred_scene_coords_b31)
@@ -465,10 +466,23 @@ class TrainerACE:
         invalid_mask_b1 = (invalid_min_depth_b1 | invalid_repro_b1 | invalid_max_depth_b1)
         valid_mask_b1 = ~invalid_mask_b1
 
+        # Compute confidence loss according to ConfNet.
+        conf_valid_p1 = conf_p1[valid_mask_b1]
+        conf_invalid_p1 = conf_p1[invalid_mask_b1]
+        loss_valid_conf_reg = - self.options.conf_reg_alpha * conf_valid_p1.log()
+        loss_invalid_conf_reg = - self.options.conf_reg_alpha * torch.log(1 - conf_invalid_p1 + 1e-6)
+
+        if (conf_valid_p1.max().item() - conf_valid_p1.min().item()) < 1e-4:
+            _logger.warning(
+                f'All confidence is similar, Please check the confidence value. '
+                f'(min, max) = ({conf_valid_p1.min().item(), conf_valid_p1.max().item()})'
+            )
+
         # Reprojection error for all valid scene coordinates.
         valid_reprojection_error_b1 = reprojection_error_b1[valid_mask_b1]
         # Compute the loss for valid predictions.
-        loss_valid = self.repro_loss.compute(valid_reprojection_error_b1, self.iteration)
+        # loss_valid = self.repro_loss.compute(valid_reprojection_error_b1, self.iteration)
+        loss_valid_with_conf = (conf_valid_p1 * valid_reprojection_error_b1 + loss_valid_conf_reg).sum()
 
         # Handle the invalid predictions: generate proxy coordinate targets with constant depth assumption.
         pixel_grid_crop_b31 = to_homogeneous(target_px_b2.unsqueeze(2))
@@ -477,9 +491,10 @@ class TrainerACE:
         # Compute the distance to target camera coordinates.
         invalid_mask_b11 = invalid_mask_b1.unsqueeze(2)
         loss_invalid = torch.abs(target_camera_coords_b31 - pred_cam_coords_b31).masked_select(invalid_mask_b11).sum()
+        loss_invalid_with_conf = loss_invalid + loss_invalid_conf_reg.sum()
 
         # Final loss is the sum of all 2.
-        loss = loss_valid + loss_invalid
+        loss = loss_invalid_with_conf + loss_valid_with_conf
         loss /= batch_size
 
         # We need to check if the step actually happened, since the scaler might skip optimisation steps.

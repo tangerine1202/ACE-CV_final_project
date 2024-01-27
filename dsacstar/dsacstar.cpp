@@ -57,9 +57,11 @@ at::Tensor matIntToTensor(const cv::Mat_<int>& mat_int) {
 /**
  * @brief Estimate a camera pose based on a scene coordinate prediction
  * @param sceneCoordinatesSrc Scene coordinate prediction, (1x3xHxW) with 1=batch dimension (only batch_size=1 supported atm), 3=scene coordainte dimensions, H=height and W=width.
+ * @param confidencesSrc Confidence prediction, (HxW) with 1=batch dimension (only batch_size=1 supported atm), H=height and W=width.	
  * @param outPoseSrc Camera pose (output parameter), (4x4) tensor containing the homogeneous camera tranformation matrix.
  * @param ransacHypotheses Number of RANSAC iterations.
  * @param inlierThreshold Inlier threshold for RANSAC in px.
+ * @param confidenceInlierThreshold Inlier threshold for RANSAC.
  * @param focalLength Focal length of the camera in px.
  * @param ppointX Coordinate (X) of the prinicpal points.
  * @param ppointY Coordinate (Y) of the prinicpal points.
@@ -70,21 +72,27 @@ at::Tensor matIntToTensor(const cv::Mat_<int>& mat_int) {
  */
 at::Tensor dsacstar_rgb_forward(
 	at::Tensor sceneCoordinatesSrc, 
+	at::Tensor confidencesSrc,
 	at::Tensor outPoseSrc,
 	int ransacHypotheses, 
 	float inlierThreshold,
+	float confidenceInlierThreshold,
 	float focalLength,
 	float ppointX,
 	float ppointY,
 	float inlierAlpha,
 	float maxReproj,
-	int subSampling)
+	int subSampling,
+	int samplingMethod
+	)
 {
 	ThreadRand::init();
 
 	// access to tensor objects
 	dsacstar::coord_t sceneCoordinates = 
 		sceneCoordinatesSrc.accessor<float, 4>();
+	dsacstar::conf_t confidences =
+		confidencesSrc.accessor<float, 2>();
 
 	// dimensions of scene coordinate predictions
 	int imH = sceneCoordinates.size(2);
@@ -112,15 +120,18 @@ at::Tensor dsacstar_rgb_forward(
 
 	dsacstar::sampleHypotheses(
 		sceneCoordinates,
+		confidences,
 		sampling,
 		camMat,
 		ransacHypotheses,
 		MAX_HYPOTHESES_TRIES,
 		inlierThreshold,
+		samplingMethod,
 		hypotheses,
 		sampledPoints,
 		imgPts,
-		objPts);
+		objPts
+		);
 
 	std::cout << "Done in " << stopW.stop() / 1000 << "s." << std::endl;	
 	std::cout << BLUETEXT("Calculating scores.") << std::endl;
@@ -142,8 +153,11 @@ at::Tensor dsacstar_rgb_forward(
     // soft inlier counting
 	std::vector<double> scores = dsacstar::getHypScores(
     	reproErrs,
+		confidences,
     	inlierThreshold,
-    	inlierAlpha);
+    	inlierAlpha,
+		samplingMethod
+		);
 
 	std::cout << "Done in " << stopW.stop() / 1000 << "s." << std::endl;
 	std::cout << BLUETEXT("Drawing final hypothesis.") << std::endl;	
@@ -165,12 +179,15 @@ at::Tensor dsacstar_rgb_forward(
 
 	dsacstar::refineHyp(
 		sceneCoordinates,
+		confidences,
 		reproErrs[hypIdx],
 		sampling,
 		camMat,
 		inlierThreshold,
+		confidenceInlierThreshold,
 		MAX_REF_STEPS,
 		maxReproj,
+		samplingMethod,
 		hypotheses[hypIdx],
 		inlierMap);
 
